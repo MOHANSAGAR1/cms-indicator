@@ -1,8 +1,8 @@
-streamlit==1.47.0
-yfinance==0.2.65
-beautifulsoup4==4.13.4
+streamlit
+yfinance
 plotly
-wordcloud
 requests
-pandas
-numpy
+textblob
+wordcloud
+matplotlib
+Pillow
