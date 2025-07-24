@@ -6,12 +6,11 @@ from datetime import datetime, timedelta
 from textblob import TextBlob
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
-from io import BytesIO
-from PIL import Image
 
-st.set_page_config(page_title="CMS - Indian Market Sentiment", layout="wide", initial_sidebar_state='expanded')
+# Page config
+st.set_page_config(page_title="CMS - Indian Market Sentiment", layout="wide", initial_sidebar_state="expanded")
 
-# --- Sidebar setup ---
+# Sidebar inputs
 st.sidebar.title("CMS Setup")
 
 newsapi_key = st.sidebar.text_input("Enter NewsAPI.org API Key:", type="password")
@@ -21,6 +20,7 @@ indices = {
     "Sensex": "^BSESN",
     "Nifty Bank": "^NSEBANK",
     "Nifty IT": "^CNXIT",
+    "Nifty Midcap 50": "^MIDCAP50",
 }
 
 timeframes = {
@@ -42,7 +42,7 @@ dark_mode = st.sidebar.checkbox("Dark Mode", value=False)
 ticker = indices[selected_index]
 period = timeframes[selected_timeframe]
 
-# --- Styling for dark mode ---
+# Styling for dark/light mode
 if dark_mode:
     bg_color = "#0e1117"
     font_color = "white"
@@ -58,16 +58,21 @@ st.markdown(
     .main {{
         background-color: {bg_color};
         color: {font_color};
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     }}
     a {{
         color: #1f77b4;
+        text-decoration: none;
+    }}
+    a:hover {{
+        text-decoration: underline;
     }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# --- Fetch price data ---
+# Fetch price data with caching
 @st.cache_data(ttl=300)
 def fetch_price_data(ticker_symbol, period):
     df = yf.download(ticker_symbol, period=period, progress=False, auto_adjust=True)
@@ -76,11 +81,10 @@ def fetch_price_data(ticker_symbol, period):
 price_df = fetch_price_data(ticker, period)
 
 if price_df.empty:
-    st.error("No price data available.")
+    st.error("No price data available for selected index and timeframe.")
 else:
     price_df.reset_index(inplace=True)
 
-    # --- Plot price chart ---
     fig = go.Figure()
     if selected_chart_type == "Candlestick":
         fig.add_trace(go.Candlestick(
@@ -92,7 +96,7 @@ else:
             x=price_df['Date'], open=price_df['Open'], high=price_df['High'],
             low=price_df['Low'], close=price_df['Close'], name='OHLC'
         ))
-    else:  # Line chart
+    else:
         fig.add_trace(go.Scatter(
             x=price_df['Date'], y=price_df['Close'], mode='lines', name='Close Price'
         ))
@@ -106,7 +110,7 @@ else:
         xaxis_rangeslider_visible=False
     )
 
-# --- Fetch news + sentiment ---
+# Fetch news and perform sentiment analysis
 @st.cache_data(ttl=300)
 def get_news_sentiment(api_key, query, from_date, to_date, page_size=30):
     url = (
@@ -146,7 +150,6 @@ if newsapi_key:
     from_date = to_date - timedelta(days=3)
     articles = get_news_sentiment(newsapi_key, selected_index, from_date, to_date)
 
-    # Sentiment summary
     pos = sum(1 for a in articles if a['sentiment'] == 'Positive')
     neg = sum(1 for a in articles if a['sentiment'] == 'Negative')
     neu = sum(1 for a in articles if a['sentiment'] == 'Neutral')
@@ -155,56 +158,50 @@ if newsapi_key:
     neg_pct = neg / total * 100 if total else 0
     neu_pct = neu / total * 100 if total else 0
 
-    # --- Display metrics ---
     st.markdown(f"## CMS Sentiment Indicator for **{selected_index}**")
-    st.metric("Positive Sentiment", f"{pos} articles ({pos_pct:.1f}%)")
-    st.metric("Negative Sentiment", f"{neg} articles ({neg_pct:.1f}%)")
-    st.metric("Neutral Sentiment", f"{neu} articles ({neu_pct:.1f}%)")
+    cols = st.columns(3)
+    cols[0].metric("Positive Sentiment", f"{pos} articles ({pos_pct:.1f}%)")
+    cols[1].metric("Negative Sentiment", f"{neg} articles ({neg_pct:.1f}%)")
+    cols[2].metric("Neutral Sentiment", f"{neu} articles ({neu_pct:.1f}%)")
 
-    # --- Word Cloud for Sentiment Keywords ---
-    combined_text = " ".join([a['title'] + " " + (a['description'] or "") for a in articles])
-    if combined_text.strip():
-        wordcloud = WordCloud(
-            width=400, height=200,
-            background_color='black' if dark_mode else 'white',
-            colormap='RdYlGn'
-        ).generate(combined_text)
+    # Show news articles
+    st.markdown("### Recent News Articles")
 
-        fig_wc, ax = plt.subplots(figsize=(8, 4))
-        ax.imshow(wordcloud, interpolation="bilinear")
-        ax.axis("off")
-        st.pyplot(fig_wc)
+    sentiment_colors = {
+        "Positive": "green",
+        "Negative": "red",
+        "Neutral": "gray"
+    }
+
+    for article in articles:
+        color = sentiment_colors.get(article['sentiment'], 'black')
+        # Get source domain to fetch logo from Clearbit
+        source_domain = article['source'].replace(' ', '').lower() + ".com"
+        source_logo_url = f"https://logo.clearbit.com/{source_domain}"
+        st.markdown(
+            f"""
+            <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px;">
+                <img src="{source_logo_url}" alt="{article['source']}" width="20" style="vertical-align: middle; margin-right: 8px;">
+                <a href="{article['url']}" target="_blank" style="color:{color}; font-weight:bold; font-size:16px;">{article['title']}</a>
+                <p style="color:#666;">{article['description']}</p>
+                <small style="color:#999;">Source: {article['source']} | Published: {article['published_at'][:10]}</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
 else:
-    st.warning("Enter your NewsAPI.org API key in the sidebar to view live news and sentiment.")
+    st.warning("🔐 Please enter your NewsAPI key in the sidebar to fetch news and sentiment.")
 
-# --- Layout ---
-col1, col2 = st.columns([3, 2])
+# Show the price chart
+if not price_df.empty:
+    st.plotly_chart(fig, use_container_width=True)
 
-with col1:
-    if not price_df.empty:
-        st.plotly_chart(fig, use_container_width=True)
-
-with col2:
-    st.subheader(f"Latest News for {selected_index}")
-    if newsapi_key and articles:
-        # Simple source logo mapping, extend as needed
-        logo_map = {
-            "Reuters": "https://s3.reutersmedia.net/resources_v2/images/favicon/favicon.ico",
-            "Bloomberg": "https://assets.bwbx.io/s3/javelin/public/assets/images/favicon.ico",
-            "CNBC": "https://www.cnbc.com/favicon.ico",
-            "Forex Factory": "https://cdn.forexfactory.net/images/favicon.ico",
-            # Add more logos here
-        }
-
-        for art in articles:
-            color = {"Positive": "green", "Negative": "red", "Neutral": "gray"}.get(art['sentiment'], "black")
-            logo_url = logo_map.get(art['source'], "")
-            logo_html = f'<img src="{logo_url}" width="20" height="20" style="vertical-align:middle;margin-right:5px;">' if logo_url else ""
-            st.markdown(f"{logo_html} <a href='{art['url']}' target='_blank'><b style='color:{color}'>{art['title']}</b></a>", unsafe_allow_html=True)
-            st.markdown(f"<small><i>{art['source']} | {art['published_at'][:10]}</i></small>", unsafe_allow_html=True)
-            st.markdown("---")
-    elif newsapi_key:
-        st.info("No recent news found.")
-    else:
-        st.info("Enter your NewsAPI key in the sidebar to load news.")
-
+# Word cloud from news titles + descriptions
+if newsapi_key and articles:
+    all_text = " ".join([a['title'] + " " + (a['description'] or '') for a in articles])
+    if all_text.strip():
+        wordcloud = WordCloud(width=800, height=400, background_color=bg_color).generate(all_text)
+        plt.figure(figsize=(12,6))
+        plt.imshow(wordcloud, interpolation='bilinear')
+        plt.axis('off')
+        st.pyplot(plt)
