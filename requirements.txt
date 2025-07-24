@@ -1,7 +1,6 @@
 streamlit
-newsapi-python
-textblob
-pandas
 requests
+pandas
 wordcloud
 matplotlib
+textblob
