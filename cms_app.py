@@ -11,7 +11,8 @@ st.set_page_config(page_title="CMS - Market Sentiment", layout="wide")
 st.title("📊 CMS - Crowd Market Sentiment (Live News-Based)")
 
 # Input: Your News API Key
-api_key = st.secrets["NEWSAPI_KEY"] if "NEWSAPI_KEY" in st.secrets else st.text_input("🔑 Enter your NewsAPI.org API Key:", type="password")
+api_key = st.secrets["NEWSAPI_KEY"]
+
 
 # Topic or keyword
 topic = st.text_input("🔍 Enter a keyword (e.g., 'Nifty', 'BankNifty', 'RBI', etc.):", "Nifty")
