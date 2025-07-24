@@ -26,8 +26,11 @@ st.markdown("""
 
 # Sidebar inputs
 st.sidebar.header("🔍 Setup CMS")
-api_key = st.sidebar.secrets.get("NEWSAPI_KEY") or st.sidebar.text_input(
-    "NewsAPI Key", type="password"
+try:
+    api_key = st.secrets["NEWSAPI_KEY"]
+except:
+    api_key = st.sidebar.text_input("🔑 Enter NewsAPI Key", type="password")
+
 )
 indices = {
     "Nifty 50": "^NSEI",
