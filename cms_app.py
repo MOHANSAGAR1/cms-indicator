@@ -1,140 +1,72 @@
 import streamlit as st
-import requests
-import yfinance as yf
-from textblob import TextBlob
-import plotly.graph_objects as go
 
-st.set_page_config(page_title="CMS - Market Sentiment Indicator", layout="wide")
+# --- Example sentiment percentages (replace with your real data) ---
+positive_percent = 65
+negative_percent = 25
+neutral_percent = 10
 
-# API key from Streamlit secrets (set this in Streamlit Cloud secrets)
-api_key = st.secrets["NEWSAPI_KEY"]
-
-# Market indices and Forex pairs with ticker symbols (Yahoo Finance)
+# --- Market indices with their ticker symbols ---
 indices = {
-    "NIFTY 50": "^NSEI",
-    "BSE SENSEX": "^BSESN",
-    "NIFTY BANK": "^NSEBANK",
-    "NIFTY MIDCAP 50": "^NSEMDCP50",
-    "NIFTY IT": "^CNXIT"
+    "Nifty 50": "^NSEI",
+    "Sensex": "^BSESN",
+    "Bank Nifty": "^NSEBANK",
+    "Midcap 50": "^MIDCAP50",
+    # add more Indian indices as needed
 }
 
+# --- Forex currency pairs (Yahoo Finance format) ---
 forex_pairs = {
-    "USD/INR": "USDINR=X",
     "EUR/USD": "EURUSD=X",
     "GBP/USD": "GBPUSD=X",
     "USD/JPY": "JPY=X",
-    "AUD/USD": "AUDUSD=X"
+    "USD/INR": "USDINR=X",
+    "AUD/USD": "AUDUSD=X",
+    # add more forex pairs as you want
 }
 
-st.title("📊 CMS - Market Sentiment Indicator")
-st.markdown("Real-time Indian Market and Forex sentiment with price charts and news")
+# Merge both dictionaries for selection
+all_markets = {**indices, **forex_pairs}
 
-# Choose asset type
-asset_type = st.sidebar.radio("Choose Asset Type", ["Market Index", "Forex Pair"])
+# --- App Title ---
+st.title("CMS — Crypto Market Sentiment Indicator")
 
-if asset_type == "Market Index":
-    selected_asset = st.sidebar.selectbox("Select Market Index", list(indices.keys()))
-    ticker = indices[selected_asset]
-else:
-    selected_asset = st.sidebar.selectbox("Select Forex Pair", list(forex_pairs.keys()))
-    ticker = forex_pairs[selected_asset]
+# --- Sentiment Indicator Panel at the top ---
+st.markdown(
+    f"""
+    <style>
+    .sentiment-container {{
+        display: flex;
+        justify-content: center;
+        gap: 3rem;
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin-bottom: 2rem;
+        padding: 1rem;
+        background-color: #f0f2f6;
+        border-radius: 12px;
+        box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    }}
+    .positive {{ color: #2ecc71; }}
+    .negative {{ color: #e74c3c; }}
+    .neutral {{ color: #95a5a6; }}
+    </style>
+    <div class="sentiment-container">
+        <div class="positive">👍 Positive: {positive_percent}%</div>
+        <div class="negative">👎 Negative: {negative_percent}%</div>
+        <div class="neutral">😐 Neutral: {neutral_percent}%</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-timeframe = st.sidebar.selectbox("Select Chart Timeframe", ["5d", "1mo", "3mo"])
+# --- Selection Box for Market Indices + Forex Pairs ---
+selected_market = st.selectbox("Select Market Index or Forex Pair", list(all_markets.keys()))
 
-@st.cache_data(ttl=300)
-def get_price_data(ticker, period):
-    try:
-        df = yf.download(ticker, period=period, interval="1d", auto_adjust=True)
-        return df
-    except Exception:
-        return None
+ticker_symbol = all_markets[selected_market]
+st.write(f"Showing data for: **{selected_market}** (Ticker: `{ticker_symbol}`)")
 
-df_price = get_price_data(ticker, timeframe)
-if df_price is None or df_price.empty:
-    st.error("Unable to load price data. Please try another asset or timeframe.")
-    st.stop()
+# Placeholder for your live data, charts, news, sentiment calculations, etc.
+st.info("Here will be the live news, charts, and sentiment updates related to the selected market or forex pair.")
 
-fig = go.Figure(data=[go.Candlestick(
-    x=df_price.index,
-    open=df_price['Open'],
-    high=df_price['High'],
-    low=df_price['Low'],
-    close=df_price['Close'],
-    increasing_line_color='green',
-    decreasing_line_color='red'
-)])
-fig.update_layout(title=f"{selected_asset} Price Chart ({timeframe})",
-                  xaxis_title="Date", yaxis_title="Price",
-                  xaxis_rangeslider_visible=False,
-                  template="plotly_white")
-st.plotly_chart(fig, use_container_width=True)
-
-@st.cache_data(ttl=300)
-def fetch_news_sentiment(query, key, max_articles=15):
-    url = (
-        "https://newsapi.org/v2/everything?"
-        f"q={query}&"
-        "language=en&"
-        "sortBy=publishedAt&"
-        f"pageSize={max_articles}&"
-        f"apiKey={key}"
-    )
-    res = requests.get(url)
-    if res.status_code != 200:
-        return []
-    data = res.json()
-    return data.get("articles", [])
-
-articles = fetch_news_sentiment(selected_asset, api_key)
-
-if not articles:
-    st.warning("No recent news found.")
-else:
-    pos, neg, neu = 0, 0, 0
-    st.header("📰 Latest News & Sentiment")
-
-    for art in articles:
-        headline = art['title']
-        desc = art.get('description', '')
-        url = art['url']
-        source = art.get('source', {}).get('name', 'Unknown')
-        pub_date = art.get('publishedAt', '')[:10]
-
-        text = f"{headline} {desc}"
-        polarity = TextBlob(text).sentiment.polarity
-        if polarity > 0.05:
-            sentiment = "Positive"
-            color = "green"
-            pos += 1
-        elif polarity < -0.05:
-            sentiment = "Negative"
-            color = "red"
-            neg += 1
-        else:
-            sentiment = "Neutral"
-            color = "gray"
-            neu += 1
-
-        st.markdown(f"""
-            <div style="margin-bottom:12px;">
-                <a href="{url}" target="_blank" style="color:{color}; font-weight:bold; font-size:16px; text-decoration:none;">
-                    {headline}
-                </a>
-                <br><small><em>{source} | {pub_date} | Sentiment: <strong>{sentiment}</strong></em></small>
-            </div>
-        """, unsafe_allow_html=True)
-
-    total = pos + neg + neu
-    st.markdown("---")
-    st.subheader("📊 Sentiment Summary")
-    st.write(f"Positive: {pos} ({pos/total*100:.1f}%)")
-    st.write(f"Negative: {neg} ({neg/total*100:.1f}%)")
-    st.write(f"Neutral: {neu} ({neu/total*100:.1f}%)")
-
-# Hide Streamlit footer for clean UI
-hide_streamlit_style = """
-            <style>
-            footer {visibility: hidden;}
-            </style>
-            """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# --- You can add your fetching and plotting code below ---
+# Example: fetch price data using yfinance, render charts, show news, etc.
