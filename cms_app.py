@@ -31,7 +31,6 @@ try:
 except:
     api_key = st.sidebar.text_input("🔑 Enter NewsAPI Key", type="password")
 
-)
 indices = {
     "Nifty 50": "^NSEI",
     "Sensex": "^BSESN",
