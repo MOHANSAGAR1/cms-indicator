@@ -1,207 +1,158 @@
 import streamlit as st
+import requests
 import yfinance as yf
 import plotly.graph_objects as go
-import requests
-from datetime import datetime, timedelta
 from textblob import TextBlob
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
 
-# Page config
-st.set_page_config(page_title="CMS - Indian Market Sentiment", layout="wide", initial_sidebar_state="expanded")
+# ----------- Secure API Key Handling -----------
+# Try to load API key from Streamlit secrets.toml or Cloud secrets
+try:
+    api_key = st.secrets["NEWSAPI"]["key"]
+except Exception:
+    # Fallback: ask user in sidebar (only if secret not set)
+    api_key = st.sidebar.text_input("Enter your NewsAPI.org API Key:", type="password")
 
-# Sidebar inputs
-st.sidebar.title("CMS Setup")
+if not api_key:
+    st.warning("🔐 Please enter your NewsAPI key to continue.")
+    st.stop()
 
-newsapi_key = st.sidebar.text_input("Enter NewsAPI.org API Key:", type="password")
+# ----------- Sidebar Inputs -----------
 
+st.sidebar.header("🔍 CMS - Market Sentiment")
+
+# Choose Index (example Indian indices with Yahoo ticker symbols)
 indices = {
-    "Nifty 50": "^NSEI",
-    "Sensex": "^BSESN",
-    "Nifty Bank": "^NSEBANK",
-    "Nifty IT": "^CNXIT",
-    "Nifty Midcap 50": "^MIDCAP50",
+    "NIFTY 50": "^NSEI",
+    "BSE SENSEX": "^BSESN",
+    "NIFTY BANK": "^NSEBANK",
+    "NIFTY MIDCAP 50": "^NSEMDCP50",
+    "NIFTY IT": "^CNXIT"
 }
 
-timeframes = {
-    "1 Day": "1d",
-    "5 Days": "5d",
-    "1 Month": "1mo",
-    "3 Months": "3mo",
-    "6 Months": "6mo",
-    "1 Year": "1y",
-}
+selected_index = st.sidebar.selectbox("Select Market Index:", list(indices.keys()))
+ticker_symbol = indices[selected_index]
 
-chart_types = ["Candlestick", "Line", "OHLC"]
+# Timeframe selection for charts
+timeframe = st.sidebar.selectbox("Select timeframe for chart:", ["1d", "5d", "1mo", "3mo", "6mo"])
 
-selected_index = st.sidebar.selectbox("Select Index:", list(indices.keys()))
-selected_timeframe = st.sidebar.selectbox("Select Timeframe:", list(timeframes.keys()))
-selected_chart_type = st.sidebar.selectbox("Chart Type:", chart_types)
-dark_mode = st.sidebar.checkbox("Dark Mode", value=False)
+# ----------- Fetch Price Data -----------
 
-ticker = indices[selected_index]
-period = timeframes[selected_timeframe]
+@st.cache_data(ttl=300)
+def get_price_data(ticker, period):
+    try:
+        df = yf.download(ticker, period=period, interval="1d", auto_adjust=True)
+        return df
+    except Exception as e:
+        st.error(f"Failed to fetch price data: {e}")
+        return None
 
-# Styling for dark/light mode
-if dark_mode:
-    bg_color = "#0e1117"
-    font_color = "white"
-    template = "plotly_dark"
-else:
-    bg_color = "white"
-    font_color = "black"
-    template = "plotly_white"
+df_price = get_price_data(ticker_symbol, timeframe)
 
-st.markdown(
-    f"""
-    <style>
-    .main {{
-        background-color: {bg_color};
-        color: {font_color};
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    }}
-    a {{
-        color: #1f77b4;
-        text-decoration: none;
-    }}
-    a:hover {{
-        text-decoration: underline;
-    }}
-    </style>
-    """,
-    unsafe_allow_html=True,
+if df_price is None or df_price.empty:
+    st.error("No price data found for selected index and timeframe.")
+    st.stop()
+
+# ----------- Display Candlestick Chart -----------
+
+fig = go.Figure(data=[go.Candlestick(
+    x=df_price.index,
+    open=df_price['Open'],
+    high=df_price['High'],
+    low=df_price['Low'],
+    close=df_price['Close'],
+    increasing_line_color='green',
+    decreasing_line_color='red'
+)])
+
+fig.update_layout(
+    title=f"{selected_index} Price Chart ({timeframe})",
+    xaxis_title="Date",
+    yaxis_title="Price (INR)",
+    xaxis_rangeslider_visible=False,
+    template="plotly_white"
 )
 
-# Fetch price data with caching
+st.plotly_chart(fig, use_container_width=True)
+
+# ----------- Fetch News and Sentiment -----------
+
 @st.cache_data(ttl=300)
-def fetch_price_data(ticker_symbol, period):
-    df = yf.download(ticker_symbol, period=period, progress=False, auto_adjust=True)
-    return df
+def get_news_and_sentiment(query, api_key, page_size=20):
+    url = ("https://newsapi.org/v2/everything?"
+           f"q={query}&"
+           "language=en&"
+           "sortBy=publishedAt&"
+           f"pageSize={page_size}&"
+           f"apiKey={api_key}")
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if data.get("status") != "ok":
+            st.error(f"News API error: {data.get('message')}")
+            return []
+        return data.get("articles", [])
+    except Exception as e:
+        st.error(f"Failed to fetch news: {e}")
+        return []
 
-price_df = fetch_price_data(ticker, period)
+articles = get_news_and_sentiment(selected_index, api_key)
 
-if price_df.empty:
-    st.error("No price data available for selected index and timeframe.")
+if not articles:
+    st.warning("No recent news found for the selected index.")
 else:
-    price_df.reset_index(inplace=True)
-
-    fig = go.Figure()
-    if selected_chart_type == "Candlestick":
-        fig.add_trace(go.Candlestick(
-            x=price_df['Date'], open=price_df['Open'], high=price_df['High'],
-            low=price_df['Low'], close=price_df['Close'], name='Candlestick'
-        ))
-    elif selected_chart_type == "OHLC":
-        fig.add_trace(go.Ohlc(
-            x=price_df['Date'], open=price_df['Open'], high=price_df['High'],
-            low=price_df['Low'], close=price_df['Close'], name='OHLC'
-        ))
-    else:
-        fig.add_trace(go.Scatter(
-            x=price_df['Date'], y=price_df['Close'], mode='lines', name='Close Price'
-        ))
-
-    fig.update_layout(
-        title=f"{selected_index} Price Chart ({selected_timeframe})",
-        xaxis_title="Date",
-        yaxis_title="Price (INR)",
-        template=template,
-        height=500,
-        xaxis_rangeslider_visible=False
-    )
-
-# Fetch news and perform sentiment analysis
-@st.cache_data(ttl=300)
-def get_news_sentiment(api_key, query, from_date, to_date, page_size=30):
-    url = (
-        "https://newsapi.org/v2/everything?"
-        f"q={query}&from={from_date}&to={to_date}&language=en&"
-        f"sortBy=publishedAt&pageSize={page_size}&apiKey={api_key}"
-    )
-    res = requests.get(url)
-    data = res.json()
-    articles = []
-    if data.get("status") == "ok":
-        for a in data.get("articles", []):
-            title = a.get("title", "")
-            desc = a.get("description", "")
-            source = a.get("source", {}).get("name", "")
-            url = a.get("url", "")
-            pub = a.get("publishedAt", "")
-            polarity = TextBlob(title + " " + (desc or "")).sentiment.polarity
-            sentiment = "Neutral"
-            if polarity > 0.1:
-                sentiment = "Positive"
-            elif polarity < -0.1:
-                sentiment = "Negative"
-            articles.append({
-                "title": title,
-                "description": desc,
-                "source": source,
-                "url": url,
-                "published_at": pub,
-                "sentiment": sentiment,
-                "polarity": polarity,
-            })
-    return articles
-
-if newsapi_key:
-    to_date = datetime.utcnow().date()
-    from_date = to_date - timedelta(days=3)
-    articles = get_news_sentiment(newsapi_key, selected_index, from_date, to_date)
-
-    pos = sum(1 for a in articles if a['sentiment'] == 'Positive')
-    neg = sum(1 for a in articles if a['sentiment'] == 'Negative')
-    neu = sum(1 for a in articles if a['sentiment'] == 'Neutral')
-    total = len(articles)
-    pos_pct = pos / total * 100 if total else 0
-    neg_pct = neg / total * 100 if total else 0
-    neu_pct = neu / total * 100 if total else 0
-
-    st.markdown(f"## CMS Sentiment Indicator for **{selected_index}**")
-    cols = st.columns(3)
-    cols[0].metric("Positive Sentiment", f"{pos} articles ({pos_pct:.1f}%)")
-    cols[1].metric("Negative Sentiment", f"{neg} articles ({neg_pct:.1f}%)")
-    cols[2].metric("Neutral Sentiment", f"{neu} articles ({neu_pct:.1f}%)")
-
-    # Show news articles
-    st.markdown("### Recent News Articles")
-
-    sentiment_colors = {
-        "Positive": "green",
-        "Negative": "red",
-        "Neutral": "gray"
-    }
+    st.subheader("📰 Latest News & Sentiment")
+    pos_count = 0
+    neg_count = 0
+    neu_count = 0
 
     for article in articles:
-        color = sentiment_colors.get(article['sentiment'], 'black')
-        # Get source domain to fetch logo from Clearbit
-        source_domain = article['source'].replace(' ', '').lower() + ".com"
-        source_logo_url = f"https://logo.clearbit.com/{source_domain}"
-        st.markdown(
-            f"""
-            <div style="border-left: 4px solid {color}; padding-left: 10px; margin-bottom: 10px;">
-                <img src="{source_logo_url}" alt="{article['source']}" width="20" style="vertical-align: middle; margin-right: 8px;">
-                <a href="{article['url']}" target="_blank" style="color:{color}; font-weight:bold; font-size:16px;">{article['title']}</a>
-                <p style="color:#666;">{article['description']}</p>
-                <small style="color:#999;">Source: {article['source']} | Published: {article['published_at'][:10]}</small>
+        headline = article['title']
+        description = article.get('description', '')
+        source = article.get('source', {}).get('name', 'Unknown')
+        url = article.get('url')
+        published_at = article.get('publishedAt', '')[:10]
+
+        # Sentiment analysis on headline + description
+        text = f"{headline}. {description}"
+        analysis = TextBlob(text)
+        polarity = analysis.sentiment.polarity
+        if polarity > 0.05:
+            sentiment = "Positive"
+            pos_count += 1
+            color = "green"
+        elif polarity < -0.05:
+            sentiment = "Negative"
+            neg_count += 1
+            color = "red"
+        else:
+            sentiment = "Neutral"
+            neu_count += 1
+            color = "gray"
+
+        # Display with colored headline and source badge
+        st.markdown(f"""
+            <div style="border-bottom:1px solid #ddd; margin-bottom:10px; padding-bottom:10px;">
+                <h4 style="color:{color}; margin-bottom:5px;">
+                    <a href="{url}" target="_blank" style="text-decoration:none; color:{color};">{headline}</a>
+                </h4>
+                <small><em>{source} | {published_at} | Sentiment: <strong>{sentiment}</strong></em></small>
             </div>
-            """, unsafe_allow_html=True
-        )
+            """, unsafe_allow_html=True)
 
-else:
-    st.warning("🔐 Please enter your NewsAPI key in the sidebar to fetch news and sentiment.")
+    # ----------- Show Sentiment Summary -----------
 
-# Show the price chart
-if not price_df.empty:
-    st.plotly_chart(fig, use_container_width=True)
+    total = pos_count + neg_count + neu_count
+    if total > 0:
+        st.markdown("---")
+        st.subheader("📊 Sentiment Summary")
+        st.write(f"Positive: {pos_count} ({pos_count/total*100:.1f}%)")
+        st.write(f"Negative: {neg_count} ({neg_count/total*100:.1f}%)")
+        st.write(f"Neutral: {neu_count} ({neu_count/total*100:.1f}%)")
 
-# Word cloud from news titles + descriptions
-if newsapi_key and articles:
-    all_text = " ".join([a['title'] + " " + (a['description'] or '') for a in articles])
-    if all_text.strip():
-        wordcloud = WordCloud(width=800, height=400, background_color=bg_color).generate(all_text)
-        plt.figure(figsize=(12,6))
-        plt.imshow(wordcloud, interpolation='bilinear')
-        plt.axis('off')
-        st.pyplot(plt)
+# ----------- Footer -----------
+
+st.markdown("""
+<style>
+footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
