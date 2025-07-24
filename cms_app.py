@@ -1,80 +1,103 @@
 import streamlit as st
 import requests
 import pandas as pd
+import yfinance as yf
 from wordcloud import WordCloud
 import matplotlib.pyplot as plt
 from textblob import TextBlob
 from datetime import datetime, timedelta
 
-# Streamlit App Title
-st.set_page_config(page_title="CMS - Crowd Market Sentiment", layout="wide")
-st.title("🧠 CMS - Crowd Market Sentiment (India)")
+# Streamlit layout settings
+st.set_page_config(
+    page_title="CMS • Crowd Market Sentiment",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# API Key Input
-api_key = st.secrets["news_api_key"] if "news_api_key" in st.secrets else st.text_input("Enter your NewsAPI.org API Key:", type="password")
+# Header
+st.markdown("""
+    <div style="background-color:#205072;padding:10px;border-radius:5px">
+        <h1 style="color:#fff;text-align:center;">CMS • Crowd Market Sentiment</h1>
+        <p style="color:#eee;text-align:center;font-size:1.1em;">
+            Real-time Indian Market Sentiment & Index Tracker
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Topic selection
-query = st.text_input("Enter a market-related topic (e.g., Nifty, Sensex, RBI, Reliance):", "Nifty")
+# Sidebar inputs
+st.sidebar.header("🔍 Setup CMS")
+api_key = st.sidebar.secrets.get("NEWSAPI_KEY") or st.sidebar.text_input(
+    "NewsAPI Key", type="password"
+)
+indices = {
+    "Nifty 50": "^NSEI",
+    "Sensex": "^BSESN",
+    "Bank Nifty": "^NSEBANK",
+    "Nifty Midcap 50": "^MIDCAP50",
+    "Nifty Smallcap 50": "^SMALLCAP50"
+}
+selected_index = st.sidebar.selectbox("Select Market Index:", list(indices.keys()))
+ticker_symbol = indices[selected_index]
+refresh_sec = st.sidebar.slider("Refresh Interval (sec)", 30, 600, 120)
 
-# Function to get news
-@st.cache_data(ttl=3600)
-def get_news(api_key, query):
-    url = f"https://newsapi.org/v2/everything?q={query}&language=en&from={(datetime.now() - timedelta(days=1)).date()}&sortBy=publishedAt&apiKey={api_key}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.json().get("articles", [])
-    else:
-        st.error("❌ Failed to fetch news. Check your API key or try again later.")
-        return []
+# Helper functions
+@st.cache_data(ttl=300)
+def fetch_news():
+    url = (
+        f"https://newsapi.org/v2/everything?q=India stock market OR {selected_index}"
+        f"&from={(datetime.now()-timedelta(days=1)).date()}&sortBy=publishedAt"
+        f"&language=en&apiKey={api_key}"
+    )
+    res = requests.get(url).json()
+    return res.get("articles", []) if res.get("status") == "ok" else []
 
-# Sentiment calculation
-def analyze_sentiment(text):
+def sentiment_score(text):
     return TextBlob(text).sentiment.polarity
 
-# Process and visualize
+# Main content area
 if api_key:
-    articles = get_news(api_key, query)
-    if articles:
-        titles = [article["title"] for article in articles if article["title"]]
-        descriptions = [article["description"] or "" for article in articles]
-        combined_text = " ".join(titles + descriptions)
+    # --- Market Data ---
+    st.subheader(f"{selected_index} • Real-Time Market Data")
+    df_price = yf.download(ticker_symbol, period="5d", interval="1d")
+    st.dataframe(df_price, use_container_width=True)
 
-        # Sentiment analysis
-        sentiments = [analyze_sentiment(text) for text in titles]
-        avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+    # --- News & Sentiment ---
+    articles = fetch_news()
+    titles = [a["title"] for a in articles if a.get("title")]
+    avg_sentiment = pd.Series([sentiment_score(t) for t in titles]).mean() if titles else 0
+    status = (
+        "🟢 Positive" if avg_sentiment > 0.1 else
+        "🔴 Negative" if avg_sentiment < -0.1 else
+        "🟡 Neutral"
+    )
 
-        # Sentiment status
-        if avg_sentiment > 0.1:
-            status = "🟢 Positive"
-        elif avg_sentiment < -0.1:
-            status = "🔴 Negative"
-        else:
-            status = "🟡 Neutral"
+    st.markdown("### 📰 Market Sentiment Indicator")
+    colA, colB = st.columns([1, 2])
 
-        # Layout
-        col1, col2 = st.columns([2, 3])
+    with colA:
+        st.metric(label="Average Sentiment Score", value=f"{avg_sentiment:.2f}", delta=status)
 
-        with col1:
-            st.subheader("📊 Sentiment Score")
-            st.metric(label="Average Sentiment", value=f"{avg_sentiment:.2f}", delta=status)
-
-            # WordCloud
-            st.subheader("☁ Word Cloud from News")
-            wordcloud = WordCloud(width=600, height=400, background_color='white').generate(combined_text)
-            plt.figure(figsize=(10, 5))
-            plt.imshow(wordcloud, interpolation='bilinear')
-            plt.axis('off')
+    with colB:
+        if titles:
+            wc_text = " ".join(titles)
+            wc = WordCloud(width=600, height=300, background_color="white").generate(wc_text)
+            plt.figure(figsize=(6,3))
+            plt.imshow(wc, interpolation="bilinear")
+            plt.axis("off")
             st.pyplot(plt)
 
-        with col2:
-            st.subheader("🗞 Latest Market News")
-            for article in articles[:10]:
-                st.markdown(f"**{article['title']}**")
-                st.markdown(f"*{article['source']['name']}* — {article['publishedAt'][:10]}")
-                st.markdown(article['description'] or "_No description provided._")
-                st.markdown(f"[Read More]({article['url']})")
-                st.markdown("---")
+    # --- Latest News ---
+    if titles:
+        st.markdown("### 🆕 Latest News Headlines")
+        for art in articles[:10]:
+            st.markdown(f"**{art['title']}**")
+            st.markdown(f"*{art['source']['name']} — {art['publishedAt'][:10]}*")
+            st.markdown(f"{art.get('description','')}")
+            st.markdown(f"[Read More]({art['url']})\n---")
     else:
-        st.warning("No recent articles found.")
+        st.warning("No recent news found.")
+
+    # Auto-refresh
+    st.experimental_rerun()
 else:
-    st.info("🔐 Please enter your NewsAPI key to begin.")
+    st.warning("🔐 Please enter your NewsAPI key in the sidebar to start.")
