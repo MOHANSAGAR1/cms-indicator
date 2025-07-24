@@ -6,9 +6,10 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="CMS - Market Sentiment Indicator", layout="wide")
 
-# === API key from Streamlit secrets (set this in your Streamlit Cloud secrets) ===
+# API key from Streamlit secrets (set this in Streamlit Cloud secrets)
 api_key = st.secrets["NEWSAPI_KEY"]
 
+# Market indices and Forex pairs with ticker symbols (Yahoo Finance)
 indices = {
     "NIFTY 50": "^NSEI",
     "BSE SENSEX": "^BSESN",
@@ -17,13 +18,28 @@ indices = {
     "NIFTY IT": "^CNXIT"
 }
 
+forex_pairs = {
+    "USD/INR": "USDINR=X",
+    "EUR/USD": "EURUSD=X",
+    "GBP/USD": "GBPUSD=X",
+    "USD/JPY": "JPY=X",
+    "AUD/USD": "AUDUSD=X"
+}
+
 st.title("📊 CMS - Market Sentiment Indicator")
-st.markdown("Real-time Indian Market sentiment with price charts and news")
+st.markdown("Real-time Indian Market and Forex sentiment with price charts and news")
 
-selected_index = st.sidebar.selectbox("Select Market Index", list(indices.keys()))
+# Choose asset type
+asset_type = st.sidebar.radio("Choose Asset Type", ["Market Index", "Forex Pair"])
+
+if asset_type == "Market Index":
+    selected_asset = st.sidebar.selectbox("Select Market Index", list(indices.keys()))
+    ticker = indices[selected_asset]
+else:
+    selected_asset = st.sidebar.selectbox("Select Forex Pair", list(forex_pairs.keys()))
+    ticker = forex_pairs[selected_asset]
+
 timeframe = st.sidebar.selectbox("Select Chart Timeframe", ["5d", "1mo", "3mo"])
-
-ticker = indices[selected_index]
 
 @st.cache_data(ttl=300)
 def get_price_data(ticker, period):
@@ -35,7 +51,7 @@ def get_price_data(ticker, period):
 
 df_price = get_price_data(ticker, timeframe)
 if df_price is None or df_price.empty:
-    st.error("Unable to load price data. Please try another index or timeframe.")
+    st.error("Unable to load price data. Please try another asset or timeframe.")
     st.stop()
 
 fig = go.Figure(data=[go.Candlestick(
@@ -47,8 +63,8 @@ fig = go.Figure(data=[go.Candlestick(
     increasing_line_color='green',
     decreasing_line_color='red'
 )])
-fig.update_layout(title=f"{selected_index} Price Chart ({timeframe})",
-                  xaxis_title="Date", yaxis_title="Price (INR)",
+fig.update_layout(title=f"{selected_asset} Price Chart ({timeframe})",
+                  xaxis_title="Date", yaxis_title="Price",
                   xaxis_rangeslider_visible=False,
                   template="plotly_white")
 st.plotly_chart(fig, use_container_width=True)
@@ -69,13 +85,13 @@ def fetch_news_sentiment(query, key, max_articles=15):
     data = res.json()
     return data.get("articles", [])
 
-articles = fetch_news_sentiment(selected_index, api_key)
+articles = fetch_news_sentiment(selected_asset, api_key)
 
 if not articles:
     st.warning("No recent news found.")
 else:
     pos, neg, neu = 0, 0, 0
-    st.header("📰 Latest Market News & Sentiment")
+    st.header("📰 Latest News & Sentiment")
 
     for art in articles:
         headline = art['title']
