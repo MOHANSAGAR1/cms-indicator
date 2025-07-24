@@ -1,0 +1,7 @@
+streamlit
+newsapi-python
+textblob
+pandas
+requests
+wordcloud
+matplotlib
