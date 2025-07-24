@@ -1,105 +1,86 @@
 import streamlit as st
-import requests
-import pandas as pd
 import yfinance as yf
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+import requests
 from textblob import TextBlob
 from datetime import datetime, timedelta
 
-# Streamlit layout settings
-st.set_page_config(
-    page_title="CMS • Crowd Market Sentiment",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# --- Helper functions for sentiment ---
+def get_sentiment(text):
+    analysis = TextBlob(text)
+    if analysis.sentiment.polarity > 0.05:
+        return "Positive"
+    elif analysis.sentiment.polarity < -0.05:
+        return "Negative"
+    else:
+        return "Neutral"
 
-# Header
-st.markdown("""
-    <div style="background-color:#205072;padding:10px;border-radius:5px">
-        <h1 style="color:#fff;text-align:center;">CMS • Crowd Market Sentiment</h1>
-        <p style="color:#eee;text-align:center;font-size:1.1em;">
-            Real-time Indian Market Sentiment & Index Tracker
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+def fetch_news(query, api_key):
+    url = f"https://newsapi.org/v2/everything?q={query}&language=en&sortBy=publishedAt&pageSize=20&apiKey={api_key}"
+    res = requests.get(url).json()
+    return res.get("articles", [])
 
-# Sidebar inputs
-st.sidebar.header("🔍 Setup CMS")
-try:
-    api_key = st.secrets["NEWSAPI_KEY"]
-except:
-    api_key = st.sidebar.text_input("🔑 Enter NewsAPI Key", type="password")
-
-indices = {
+# --- Indian market indices ---
+INDICES = {
     "Nifty 50": "^NSEI",
     "Sensex": "^BSESN",
-    "Bank Nifty": "^NSEBANK",
-    "Nifty Midcap 50": "^MIDCAP50",
-    "Nifty Smallcap 50": "^SMALLCAP50"
+    "Nifty Bank": "^NSEBANK",
+    "Nifty IT": "^CNXIT",
+    "Nifty Pharma": "^NSEPHARMA",
+    "Nifty FMCG": "^CNXFMCG"
 }
-selected_index = st.sidebar.selectbox("Select Market Index:", list(indices.keys()))
-ticker_symbol = indices[selected_index]
-refresh_sec = st.sidebar.slider("Refresh Interval (sec)", 30, 600, 120)
 
-# Helper functions
-@st.cache_data(ttl=300)
-def fetch_news():
-    url = (
-        f"https://newsapi.org/v2/everything?q=India stock market OR {selected_index}"
-        f"&from={(datetime.now()-timedelta(days=1)).date()}&sortBy=publishedAt"
-        f"&language=en&apiKey={api_key}"
-    )
-    res = requests.get(url).json()
-    return res.get("articles", []) if res.get("status") == "ok" else []
+# --- Streamlit app start ---
+st.set_page_config(page_title="CMS - Market Sentiment", layout="wide")
+st.title("📈 CMS: Comprehensive Market Sentiment Indicator")
+st.markdown("## Real-time Indian Market Sentiment Based on News")
 
-def sentiment_score(text):
-    return TextBlob(text).sentiment.polarity
+# Sidebar
+api_key = st.sidebar.text_input("Enter your NewsAPI.org API Key", type="password")
+index_choice = st.sidebar.selectbox("Select Market Index", list(INDICES.keys()))
 
-# Main content area
-if api_key:
-    # --- Market Data ---
-    st.subheader(f"{selected_index} • Real-Time Market Data")
-    df_price = yf.download(ticker_symbol, period="5d", interval="1d")
-    st.dataframe(df_price, use_container_width=True)
+if api_key and index_choice:
+    with st.spinner("Fetching news and calculating sentiment..."):
+        news = fetch_news(index_choice, api_key)
 
-    # --- News & Sentiment ---
-    articles = fetch_news()
-    titles = [a["title"] for a in articles if a.get("title")]
-    avg_sentiment = pd.Series([sentiment_score(t) for t in titles]).mean() if titles else 0
-    status = (
-        "🟢 Positive" if avg_sentiment > 0.1 else
-        "🔴 Negative" if avg_sentiment < -0.1 else
-        "🟡 Neutral"
-    )
+        sentiments = {"Positive": 0, "Negative": 0, "Neutral": 0}
+        for article in news:
+            sentiment = get_sentiment(article["title"] + " " + article.get("description", ""))
+            sentiments[sentiment] += 1
 
-    st.markdown("### 📰 Market Sentiment Indicator")
-    colA, colB = st.columns([1, 2])
+        total_news = sum(sentiments.values())
+        if total_news > 0:
+            pos_pct = (sentiments["Positive"] / total_news) * 100
+            neg_pct = (sentiments["Negative"] / total_news) * 100
+            neu_pct = (sentiments["Neutral"] / total_news) * 100
+        else:
+            pos_pct = neg_pct = neu_pct = 0
 
-    with colA:
-        st.metric(label="Average Sentiment Score", value=f"{avg_sentiment:.2f}", delta=status)
+        # Layout with columns
+        col1, col2 = st.columns([3, 2])
 
-    with colB:
-        if titles:
-            wc_text = " ".join(titles)
-            wc = WordCloud(width=600, height=300, background_color="white").generate(wc_text)
-            plt.figure(figsize=(6,3))
-            plt.imshow(wc, interpolation="bilinear")
-            plt.axis("off")
-            st.pyplot(plt)
+        with col1:
+            st.subheader(f"News Headlines for {index_choice}")
+            for article in news:
+                st.markdown(f"**[{article['title']}]({article['url']})**")
+                st.write(article.get("description", ""))
+                st.write("---")
 
-    # --- Latest News ---
-    if titles:
-        st.markdown("### 🆕 Latest News Headlines")
-        for art in articles[:10]:
-            st.markdown(f"**{art['title']}**")
-            st.markdown(f"*{art['source']['name']} — {art['publishedAt'][:10]}*")
-            st.markdown(f"{art.get('description','')}")
-            st.markdown(f"[Read More]({art['url']})\n---")
-    else:
-        st.warning("No recent news found.")
+        with col2:
+            st.subheader("Sentiment Overview")
+            st.metric("Positive", f"{pos_pct:.1f} %", delta=f"{pos_pct - 50:.1f}%")
+            st.metric("Negative", f"{neg_pct:.1f} %", delta=f"{neg_pct - 50:.1f}%")
+            st.metric("Neutral", f"{neu_pct:.1f} %")
 
-    # Auto-refresh
-    st.experimental_rerun()
+            st.progress(pos_pct / 100)
+            st.progress(neg_pct / 100)
+            st.progress(neu_pct / 100)
+
+        # Show current price and chart
+        ticker = INDICES[index_choice]
+        df = yf.download(ticker, period="5d", interval="1d", progress=False)
+        st.subheader(f"{index_choice} Price Chart")
+        st.line_chart(df["Close"])
+
 else:
-    st.warning("🔐 Please enter your NewsAPI key in the sidebar to start.")
+    st.warning("🔐 Please enter your NewsAPI.org API Key and select an index from the sidebar.")
+
