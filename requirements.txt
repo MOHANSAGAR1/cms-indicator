@@ -5,3 +5,4 @@ yfinance
 wordcloud
 matplotlib
 textblob
+plotly
