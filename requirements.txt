@@ -1,6 +1,7 @@
 streamlit
 requests
 pandas
+yfinance
 wordcloud
 matplotlib
 textblob
