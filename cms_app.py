@@ -1,144 +1,57 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import plotly.graph_objects as go
 import feedparser
 from textblob import TextBlob
-from datetime import datetime
+import plotly.graph_objects as go
 
-# --- Config ---
-st.set_page_config(page_title="CMS - Market Sentiment Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="📊 Live Market Pulse", layout="wide")
 
-# --- Indices & Forex ---
-indices = {
-    "NIFTY 50": "^NSEI",
-    "SENSEX": "^BSESN",
-    "NIFTY BANK": "^NSEBANK"
-}
+# Map of indices
+indices = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
 
-forex_pairs = {
-    "USD/INR": "INR=X",
-    "EUR/INR": "EURINR=X",
-    "GBP/INR": "GBPINR=X",
-    "JPY/INR": "JPYINR=X"
-}
-
-timeframe_options = {
-    "1 Day": ("1d", "5m"),
-    "5 Days": ("5d", "15m"),
-    "1 Month": ("1mo", "1d"),
-}
-
-sentiment_colors = {
-    "positive": "#27ae60",
-    "negative": "#c0392b",
-    "neutral": "#7f8c8d",
-}
-
-@st.cache_data(ttl=300)
-def fetch_market_data(symbol, period, interval):
-    try:
-        df = yf.download(tickers=symbol, period=period, interval=interval, auto_adjust=True)
-        if df.empty:
-            return None
-        df['Change %'] = df['Close'].pct_change() * 100
-        return df
-    except Exception:
-        return None
-
-def plot_candlestick(df, title):
-    fig = go.Figure(data=[go.Candlestick(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close'],
-        increasing_line_color='green',
-        decreasing_line_color='red',
-        name='Price'
-    )])
-    fig.update_layout(
-        title=title,
-        xaxis_title='Date',
-        yaxis_title='Price',
-        height=400,
-        margin=dict(l=40, r=40, t=40, b=40),
-        template='plotly_white'
-    )
-    return fig
-
-def fetch_headlines():
-    rss_url = "https://news.google.com/rss/search?q=nifty+stock+market&hl=en-IN&gl=IN&ceid=IN:en"
-    feed = feedparser.parse(rss_url)
+# Sentiment & headlines
+def get_sentiment_score():
+    feed = feedparser.parse("https://news.google.com/rss/search?q=nifty+market&hl=en-IN&gl=IN&ceid=IN:en")
+    scores = {"positive": 0, "negative": 0, "neutral": 0}
     headlines = []
-    for entry in feed.entries[:10]:
-        title = entry.title
-        blob = TextBlob(title)
-        polarity = blob.sentiment.polarity
-        if polarity > 0.1:
-            sentiment = "positive"
-        elif polarity < -0.1:
-            sentiment = "negative"
-        else:
-            sentiment = "neutral"
-        headlines.append({"title": title, "sentiment": sentiment})
-    return headlines
+    for entry in feed.entries[:15]:
+        blob = TextBlob(entry.title)
+        p = blob.sentiment.polarity
+        if p > 0.1: scores["positive"] += 1
+        elif p < -0.1: scores["negative"] += 1
+        else: scores["neutral"] += 1
+    return scores, [e.title for e in feed.entries[:5]]
 
-def sentiment_summary(headlines):
-    counts = {"positive": 0, "negative": 0, "neutral": 0}
-    for h in headlines:
-        counts[h["sentiment"]] += 1
-    total = sum(counts.values())
-    for k in counts:
-        counts[k] = round((counts[k]/total)*100, 1) if total > 0 else 0
-    return counts
+# Market data fetcher
+@st.cache_data(ttl=600)
+def get_index_data(symbol):
+    df = yf.download(symbol, period="5d", interval="1h", auto_adjust=True)
+    if df.empty: return None
+    df["Change %"] = df["Close"].pct_change() * 100
+    return df
 
-# --- Sidebar ---
-st.sidebar.title("CMS - Market Sentiment Setup")
-selected_index = st.sidebar.selectbox("Select Market Index", list(indices.keys()))
-selected_forex = st.sidebar.selectbox("Select Forex Pair", list(forex_pairs.keys()))
-selected_timeframe = st.sidebar.selectbox("Select Timeframe", list(timeframe_options.keys()))
+# UI
+st.title("📈 Live Market Pulse Indicator")
+sel = st.selectbox("Select Market Index", list(indices.keys()))
+df = get_index_data(indices[sel])
 
-# --- Main Header ---
-st.title("📊 CMS Market Sentiment Dashboard")
-
-# --- Headlines & Sentiment ---
-st.subheader("📰 Live Market News Sentiment")
-headlines = fetch_headlines()
-summary = sentiment_summary(headlines)
-
-col1, col2, col3 = st.columns(3)
-col1.metric("Positive Sentiment", f"{summary['positive']}%")
-col2.metric("Neutral Sentiment", f"{summary['neutral']}%")
-col3.metric("Negative Sentiment", f"{summary['negative']}%")
+if df is not None:
+    st.subheader(f"{sel} – Last 5 Days")
+    fig = go.Figure(go.Scatter(x=df.index, y=df["Close"], name="Price"))
+    st.plotly_chart(fig, use_container_width=True)
+    st.metric("Latest Change %", f"{df['Change %'].iloc[-1]:.2f}%")
+else:
+    st.warning("Unable to fetch market data.")
 
 st.markdown("---")
+scores, headlines = get_sentiment_score()
+total = sum(scores.values())
+pulse = (scores["positive"] - scores["negative"]) / (total or 1)
+
+st.subheader("🧠 Market Sentiment Pulse")
+st.progress((pulse + 1) / 2)
+st.text(f"Positive: {scores['positive']}  Negative: {scores['negative']}  Neutral: {scores['neutral']}")
+
+st.subheader("📰 Top Headlines")
 for h in headlines:
-    color = sentiment_colors.get(h["sentiment"], "#000000")
-    st.markdown(
-        f"<span style='color:{color}; font-weight:600'>{h['sentiment'].capitalize()}</span> — {h['title']}",
-        unsafe_allow_html=True
-    )
-
-# --- Market Chart ---
-period, interval = timeframe_options[selected_timeframe]
-df_index = fetch_market_data(indices[selected_index], period, interval)
-if df_index is not None:
-    st.subheader(f"{selected_index} Price Chart ({selected_timeframe})")
-    st.plotly_chart(plot_candlestick(df_index, f"{selected_index} - {selected_timeframe}"), use_container_width=True)
-    st.metric(label="Daily Change %", value=f"{df_index['Change %'].iloc[-1]:.2f}%")
-else:
-    st.warning(f"Could not load data for {selected_index}")
-
-# --- Forex Chart ---
-df_forex = fetch_market_data(forex_pairs[selected_forex], period, interval)
-if df_forex is not None:
-    st.subheader(f"{selected_forex} Price Chart ({selected_timeframe})")
-    st.plotly_chart(plot_candlestick(df_forex, f"{selected_forex} - {selected_timeframe}"), use_container_width=True)
-    st.metric(label="Daily Change %", value=f"{df_forex['Change %'].iloc[-1]:.2f}%")
-else:
-    st.warning(f"Could not load data for {selected_forex}")
-
-# --- Footer ---
-st.markdown("---")
-st.caption("📈 Powered by Yahoo Finance & Google News | Built by Mohan Sagar")
+    st.markdown(f"- {h}")
