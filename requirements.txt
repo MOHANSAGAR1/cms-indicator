@@ -1,5 +1,8 @@
-streamlit
-yfinance
+streamlit==1.24.1
+yfinance==0.2.36
+pandas
 plotly
 textblob
 feedparser
+requests==2.31.0
+beautifulsoup4==4.13.0
