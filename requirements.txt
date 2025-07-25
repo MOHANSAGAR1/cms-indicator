@@ -4,5 +4,6 @@ pandas
 plotly
 textblob
 feedparser
-requests==2.31.0
-beautifulsoup4==4.13.0
+requests
+beautifulsoup4
+nltk
