@@ -1,9 +1,6 @@
 streamlit==1.24.1
-yfinance==0.2.36
-pandas
+yfinance
 plotly
 textblob
 feedparser
-requests
-beautifulsoup4
 nltk
